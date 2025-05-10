@@ -171,6 +171,8 @@ def draw_hough_lines(image, peaks, theta_values, max_rho):
 if __name__ == '__main__':
     img_path = r'C:\AllData\Selfskills\MachineLearning&ComputerVision\DipProject\Autonomous-Vehicle-Classical-Image-Processing\Images\frame1.jpg'
     img = cv.imread(img_path, cv.IMREAD_GRAYSCALE)
+    img = cv.resize(img, (512, 512))  # resize to 512x512 for speed & clarity
+
     img_array = np.array(img)
 
     # Run Canny Edge Detection
