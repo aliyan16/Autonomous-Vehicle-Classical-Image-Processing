@@ -49,14 +49,14 @@ def increase_contrast(img):
     lab = cv.cvtColor(img, cv.COLOR_BGR2LAB)
     l, a, b = cv.split(lab)
         # Moderate CLAHE settings
-    clahe = cv.createCLAHE(clipLimit=1.0, tileGridSize=(16,16))
+    clahe = cv.createCLAHE(clipLimit=2.5, tileGridSize=(12,12))
     cl = clahe.apply(l)
         # Blend 70% of enhanced with 30% original
     blended_l = cv.addWeighted(l, 0.3, cl, 0.7, 0)
     limg = cv.merge((blended_l,a,b))
     return cv.cvtColor(limg, cv.COLOR_LAB2BGR)
    else:
-    clahe = cv.createCLAHE(clipLimit=1.0, tileGridSize=(16,16))
+    clahe = cv.createCLAHE(clipLimit=2.5, tileGridSize=(12,12))
     enhanced = clahe.apply(img)
     return cv.addWeighted(img, 0.3, enhanced, 0.7, 0)
    
@@ -74,7 +74,8 @@ if __name__=='__main__':
     enhanced = preprocess_image(high_contrast_img)
     cv.imshow('preprocessed img',enhanced)
     cv.waitKey(2000)
-    gaussianImg=smoothing(enhanced)
+    medianBlur=cv.medianBlur(enhanced,5)
+    gaussianImg=smoothing(medianBlur)
     cannyImg=cannyEdge(gaussianImg)
     # CleancannyImg=remove_noise(cannyImg)
     # cannyImg=cv.resize(cannyImg,(512,512))
