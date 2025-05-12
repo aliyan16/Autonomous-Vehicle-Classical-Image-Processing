@@ -114,10 +114,59 @@ def draw_lane_area(image, left_pts, right_pts, color=[0, 255, 0], alpha=0.3): # 
     cv.fillPoly(overlay, [pts], color)
     cv.addWeighted(overlay, alpha, output_image, 1 - alpha, 0, dst=output_image)
     return output_image
+
+
+def detect_objects_classical(frame):
+    # Convert to grayscale and blur
+    gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
+    blurred = cv.GaussianBlur(gray, (5, 5), 0)
+
+    # Edge detection
+    edges = cv.Canny(blurred, 50, 150)
+
+    # Find contours
+    contours, _ = cv.findContours(edges, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+
+    detected_objects = []
+    for cnt in contours:
+        area = cv.contourArea(cnt)
+        if area > 1000:  # ignore small areas/noise
+            x, y, w, h = cv.boundingRect(cnt)
+            cx, cy = x + w//2, y + h//2
+            detected_objects.append(((x, y, x+w, y+h), (cx, cy)))
+    return detected_objects
+
+
+def make_decision(detected_objects, frame_shape):
+    h, w = frame_shape[:2]
+    roi = (int(w * 0.3), int(h * 0.5), int(w * 0.7), h)  # central bottom zone
+
+    for (x1, y1, x2, y2), (cx, cy) in detected_objects:
+        if roi[0] <= cx <= roi[2] and roi[1] <= cy <= roi[3]:
+            if cx < w // 3:
+                return "Turn Right"
+            elif cx > 2 * w // 3:
+                return "Turn Left"
+            else:
+                return "Stop"
+    return "Move Forward"
+
+def draw_detections(frame, detected_objects, decision):
+    for (x1, y1, x2, y2), (cx, cy) in detected_objects:
+        cv.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
+        cv.circle(frame, (cx, cy), 5, (255, 255, 255), -1)
+    
+    # Draw ROI
+    h, w = frame.shape[:2]
+    cv.rectangle(frame, (int(w*0.3), int(h*0.5)), (int(w*0.7), h), (0, 255, 0), 2)
+
+    cv.putText(frame, f"Decision: {decision}", (30, 50), cv.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
+    return frame
+
 # ---------------------------------------------------------------------------
 
-if __name__=='__main__':
-    videoPath = r'C:\AllData\Selfskills\MachineLearning&ComputerVision\DipProject\Autonomous-Vehicle-Classical-Image-Processing\DIP Project Videos\PXL_20250325_045117252.TS.mp4'
+if __name__ == '__main__':
+    videoPath = r'C:\AllData\Selfskills\MachineLearning&ComputerVision\DipProject\Autonomous-Vehicle-Classical-Image-Processing\DIP Project Videos\PXL_20250325_043754655.TS.mp4'
     cap = cv.VideoCapture(videoPath)
 
     if not cap.isOpened():
@@ -125,8 +174,6 @@ if __name__=='__main__':
         exit()
 
     processing_width, processing_height = 512, 512
-
-    # Variables for simple temporal smoothing
     last_known_left_lane_points = None
     last_known_right_lane_points = None
 
@@ -136,68 +183,42 @@ if __name__=='__main__':
             print("Reached end of video or error in reading frame.")
             break
 
-        frame_resized = cv.resize(frame, (processing_width, processing_height))
-        processed_frame_output = frame_resized.copy() # This will be the frame we draw final results on
+        frame = cv.resize(frame, (processing_width, processing_height))
+        output_frame = frame.copy()
 
-        # --- Processing Pipeline ---
-        high_contrast_img = increase_contrast(frame_resized)
-        enhanced_gray = preprocess_image(high_contrast_img)
-        median_blurred = cv.medianBlur(enhanced_gray, 5)
+        # ---- Lane Detection ----
+        contrast_img = increase_contrast(frame)
+        gray_img = preprocess_image(contrast_img)
+        median_blurred = cv.medianBlur(gray_img, 5)
         gaussian_blurred = smoothing(median_blurred)
-        
-        # Canny Edge Detection - Experiment with thresholds here!
-        canny_img = cannyEdge(gaussian_blurred, low_threshold=60, high_threshold=180) # Example: Adjusted thresholds
-        
-        roc_img = region_of_interest(canny_img)
-        
-        # Hough Transform - Experiment with parameters here!
-        hough_lines = hough_transform(roc_img, threshold=20, minLineLength=20, maxLineGap=40) # Example: Adjusted parameters
+        edges = cannyEdge(gaussian_blurred, 60, 180)
+        roi_edges = region_of_interest(edges)
+        hough_lines = hough_transform(roi_edges, threshold=20, minLineLength=20, maxLineGap=40)
+        left_pts, right_pts = get_lane_lines(frame, hough_lines)
 
-        # Get current frame's lane line coordinates
-        current_left_points, current_right_points = get_lane_lines(frame_resized, hough_lines)
-
-        # --- Temporal Smoothing ---
-        if current_left_points is not None:
-            last_known_left_lane_points = current_left_points
+        if left_pts is not None:
+            last_known_left_lane_points = left_pts
         else:
-            # If current detection failed for left, use the last known good one (if any)
-            current_left_points = last_known_left_lane_points 
+            left_pts = last_known_left_lane_points
 
-        if current_right_points is not None:
-            last_known_right_lane_points = current_right_points
+        if right_pts is not None:
+            last_known_right_lane_points = right_pts
         else:
-            # If current detection failed for right, use the last known good one (if any)
-            current_right_points = last_known_right_lane_points
-        
-        # --- Debug Visualizations (Uncomment to use when detection fails) ---
-        # if current_left_points is None or current_right_points is None: # Or based on some other failure criteria
-        # print("Debug: Detection issue on this frame.")
-        # cv.imshow('Debug - Resized Frame', frame_resized)
-        # cv.imshow('Debug - Canny Edges', canny_img)
-        # cv.imshow('Debug - ROI Edges', roc_img)
-        #     if hough_lines is not None:
-        #         debug_hough_on_roi = cv.cvtColor(roc_img.copy(), cv.COLOR_GRAY2BGR)
-        # for line_segment in hough_lines:
-        # for x1,y1,x2,y2 in line_segment:
-        #                 cv.line(debug_hough_on_roi,(x1,y1),(x2,y2),(0,255,255),1) # Yellow lines
-        #         cv.imshow('Debug - Raw Hough Lines on ROI', debug_hough_on_roi)
-        #     cv.waitKey(0) # Pause to inspect
+            right_pts = last_known_right_lane_points
 
-        # --- Drawing ---
-        # 1. Draw Lane Area (Filled Polygon) using (potentially smoothed) points
-        if current_left_points and current_right_points:
-            processed_frame_output = draw_lane_area(processed_frame_output, current_left_points, current_right_points)
+        if left_pts and right_pts:
+            output_frame = draw_lane_area(output_frame, left_pts, right_pts)
 
-        # 2. Draw Lane Lines using (potentially smoothed) points
-        lines_to_draw = []
-        if current_left_points: lines_to_draw.append(current_left_points)
-        if current_right_points: lines_to_draw.append(current_right_points)
-        
-        if lines_to_draw:
-            processed_frame_output = draw_lines_on_image(processed_frame_output, lines_to_draw)
+        if left_pts: output_frame = draw_lines_on_image(output_frame, [left_pts])
+        if right_pts: output_frame = draw_lines_on_image(output_frame, [right_pts])
 
-        cv.imshow('Lane Detection Video', processed_frame_output)
+        # ---- Object Detection + Decision ----
+        detected_objects = detect_objects_classical(frame)
+        decision = make_decision(detected_objects, frame.shape)
+        output_frame = draw_detections(output_frame, detected_objects, decision)
 
+        # ---- Show Result ----
+        cv.imshow("Lane + Object Detection", output_frame)
         if cv.waitKey(25) & 0xFF == ord('q'):
             break
 
